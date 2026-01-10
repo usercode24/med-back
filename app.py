@@ -258,7 +258,7 @@ async def home(request: Request):
         track_visitor(ip, user_agent, "/")
         
         # Serve index.html from root directory
-        html_path = BASE_DIR / "templates/index.html"
+        html_path = BASE_DIR / "index.html"
         
         if not html_path.exists():
             logger.error(f"index.html not found at: {html_path}")
