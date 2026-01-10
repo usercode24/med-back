@@ -1,2 +1,1 @@
-# Procfile - Make sure it's exactly like this
 web: uvicorn app:app --host 0.0.0.0 --port $PORT
