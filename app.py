@@ -64,7 +64,7 @@ init_db()
 
 # Create FastAPI app
 app = FastAPI(
-    title="MediTour - Medical Tourism Website",
+    title="Max medical and healthcare  support",
     description="A platform for medical tourism services",
     version="1.0.0",
     debug=True
@@ -272,7 +272,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "service": "MediTour Website",
+        "service": "Max medical and healthcare  support Website",
         "timestamp": datetime.now().isoformat(),
         "database": os.path.exists(DATABASE),
         "index_html": os.path.exists(BASE_DIR / "index.html"),
@@ -315,7 +315,7 @@ if __name__ == "__main__":
     import uvicorn
     
     print("=" * 50)
-    print("🚀 Starting MediTour Medical Tourism Website")
+    print("🚀 Starting Max medical and healthcare  support Website")
     print("=" * 50)
     print("📊 Anonymous Visitor Tracking Enabled")
     print("🚫 No IP or personal data stored")

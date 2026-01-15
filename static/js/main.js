@@ -471,7 +471,7 @@ function initModalClose() {
 
 // 10. MAIN INITIALIZATION
 document.addEventListener('DOMContentLoaded', function () {
-    console.log('MediTour - Initializing with REAL visitor tracking...');
+    console.log('Max medical and healthcare  support - Initializing with REAL visitor tracking...');
 
     // Initialize all UI components
     initNavbarScroll();
@@ -501,7 +501,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Failed to initialize visitor counters:', error);
         }
 
-        console.log('MediTour - Initialization complete!');
+        console.log('Max medical and healthcare  support - Initialization complete!');
     }, 1000);
 });
 
