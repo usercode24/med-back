@@ -72,13 +72,9 @@
 
                 <h1 class="hero-title animate__animated animate__fadeInUp">
                     <span class="text-gradient">World-Class</span> Medical<br>
-                    Treatment in
-                    <span class="typewriter-container">
-                        <span class="typewriter-text"
-                            data-words='["India", "Russia", "Uzbekistan", "Kazakhstan"]'></span>
-                        <span class="typewriter-cursor">|</span>
-                    </span>
+                    Treatment in <span class="text-gradient">India</span>
                 </h1>
+
 
                 <p class="hero-subtitle animate__animated animate__fadeInUp animate__delay-1s">
                     Premium medical tourism with Russian interpretation services,
@@ -544,10 +540,16 @@
     <script src="/static/js/main.js?v=1.3"></script>
     <script>
         // Set API configuration
-        window.API_CONFIG = {
+        // Set API configuration - ensure this is accessible globally
+        window.API_CONFIG = window.API_CONFIG || {
             baseURL: 'http://localhost:8000/api',
             updateInterval: 30000
         };
+
+        // If running on a different domain, adjust accordingly
+        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            window.API_CONFIG.baseURL = '/api';
+        }
     </script>
 </body>
 

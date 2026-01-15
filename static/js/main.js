@@ -66,11 +66,27 @@ function closeServicesModal() {
     }
 }
 
+// Helper function to calculate growth rate
+function calculateGrowthRate(data) {
+    if (!data || !data.week_visitors) return 24;
+
+    // Simple growth calculation (you can customize this)
+    const lastWeekVisitors = data.week_visitors * 0.85; // Estimate
+    if (lastWeekVisitors > 0) {
+        const growth = ((data.week_visitors - lastWeekVisitors) / lastWeekVisitors) * 100;
+        return Math.round(Math.max(0, growth));
+    }
+    return 24;
+}
+
 // 2. API FUNCTIONS
 async function fetchVisitorStats() {
     try {
         console.log('Fetching visitor stats from API...');
-        const response = await fetch(`${API_CONFIG.baseURL}/stats`);
+
+        // Use the correct API endpoint from window.API_CONFIG
+        const apiBaseURL = window.API_CONFIG?.baseURL || '/api';
+        const response = await fetch(`${apiBaseURL}/stats`);
 
         if (!response.ok) {
             throw new Error(`API Error: ${response.status}`);
@@ -79,15 +95,15 @@ async function fetchVisitorStats() {
         const data = await response.json();
         console.log('API Response:', data);
 
-        // Transform FastAPI response to match expected format
+        // Return the data as-is, let the display functions handle it
         return {
-            total: data.total_visitors || 12500,
-            unique: data.unique_visitors || 8900,
-            week: data.week_visitors || 2100,
-            month: data.month_visitors || 4500,
-            today: data.today_visitors || 342,
-            last24h: data.last_24h_visitors || 150,
-            growth: 24 // Static growth rate
+            total: data.total_visitors || 0,
+            unique: data.unique_visitors || 0,
+            week: data.week_visitors || 0,
+            month: data.month_visitors || 0,
+            today: data.today_visitors || 0,
+            last24h: data.last_24h_visitors || 0,
+            growth: calculateGrowthRate(data) || 24 // Calculate or use default
         };
     } catch (error) {
         console.error('Error fetching visitor stats:', error);
@@ -233,47 +249,6 @@ function animateValue(element, start, end, duration, isPercentage = false) {
     requestAnimationFrame(step);
 }
 
-// 7. TYPING EFFECT
-function initTypingEffect() {
-    const typewriterText = document.querySelector('.typewriter-text');
-    if (!typewriterText) return;
-
-    const words = ["India", "Russia", "Uzbekistan", "Kazakhstan"];
-    let wordIndex = 0;
-    let charIndex = 0;
-    let isDeleting = false;
-
-    function type() {
-        const currentWord = words[wordIndex];
-
-        if (isDeleting) {
-            charIndex--;
-        } else {
-            charIndex++;
-        }
-
-        typewriterText.textContent = currentWord.substring(0, charIndex);
-
-        let typeSpeed = 100;
-
-        if (isDeleting) {
-            typeSpeed /= 2;
-        }
-
-        if (!isDeleting && charIndex === currentWord.length) {
-            typeSpeed = 1500;
-            isDeleting = true;
-        } else if (isDeleting && charIndex === 0) {
-            isDeleting = false;
-            wordIndex = (wordIndex + 1) % words.length;
-            typeSpeed = 500;
-        }
-
-        setTimeout(type, typeSpeed);
-    }
-
-    setTimeout(type, 500);
-}
 
 // 8. SCROLL ANIMATIONS
 function initScrollAnimations() {
@@ -537,31 +512,49 @@ document.addEventListener('DOMContentLoaded', function () {
     initCharts();
     initPreloader();
 
+    // Store initial stats in localStorage for persistence
+    let lastStats = JSON.parse(localStorage.getItem('meditour_stats')) || null;
+    let lastUpdate = localStorage.getItem('meditour_stats_update') || 0;
+    const now = Date.now();
+    const FIVE_MINUTES = 5 * 60 * 1000;
+
     // Start animations after a short delay
-    setTimeout(() => {
+    setTimeout(async () => {
         console.log('Starting animations...');
 
         // Initialize hero stats (static values)
         initHeroStats();
 
-        // Initialize visitor counters (real data from API)
-        initVisitorCounters().then(stats => {
+        // Initialize visitor counters
+        try {
+            const stats = await initVisitorCounters();
             console.log('Visitor counters initialized with:', stats);
-        }).catch(error => {
+
+            // Store in localStorage for persistence
+            localStorage.setItem('meditour_stats', JSON.stringify(stats));
+            localStorage.setItem('meditour_stats_update', Date.now().toString());
+
+            // Always start live updates
+            setupPeriodicUpdates();
+        } catch (error) {
             console.error('Failed to initialize visitor counters:', error);
-            // Use fallback
-            updateStatsWithFallback(getFallbackStats());
-        });
 
-        // Start typing effect
-        initTypingEffect();
+            // Use localStorage data if available and recent
+            if (lastStats && (now - lastUpdate) < FIVE_MINUTES) {
+                console.log('Using cached stats from localStorage');
+                updateStatsWithFallback(lastStats);
+            } else {
+                // Use fallback
+                const fallback = getFallbackStats();
+                updateStatsWithFallback(fallback);
+                localStorage.setItem('meditour_stats', JSON.stringify(fallback));
+                localStorage.setItem('meditour_stats_update', Date.now().toString());
+            }
+        }
 
-        // Start live updates
-        setupPeriodicUpdates();
 
+        console.log('MediTour - Initialization complete!');
     }, 1000);
-
-    console.log('MediTour - Initialization complete!');
 });
 
 // 20. DEBUG FUNCTION - Manually trigger stats update
