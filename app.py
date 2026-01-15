@@ -1,3 +1,5 @@
+# app.py (updated database setup and tracking functions)
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -7,7 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import os
 import logging
-import time
+import secrets
+import uuid
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,27 +23,32 @@ BASE_DIR = Path(__file__).resolve().parent
 os.makedirs("static/css", exist_ok=True)
 os.makedirs("static/js", exist_ok=True)
 
-# Database setup for visitor tracking only
+# Database setup for anonymous visitor tracking
 DATABASE = BASE_DIR / "visitors.db"
 
 def init_db():
-    """Initialize database for visitor tracking only"""
+    """Initialize database for anonymous visitor counting only"""
     try:
         conn = sqlite3.connect(DATABASE)
         c = conn.cursor()
         
-        # Visitors table
-        c.execute('''CREATE TABLE IF NOT EXISTS visitors (
+        # Simplified visitors table - NO PERSONAL DATA
+        c.execute('''CREATE TABLE IF NOT EXISTS visits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip TEXT,
-            user_agent TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            page TEXT
+            visitor_id TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )''')
         
         # Create index for faster queries
-        c.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON visitors(timestamp)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_ip ON visitors(ip)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON visits(timestamp)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_visitor_id ON visits(visitor_id)")
+        
+        # Total counts table (for quick retrieval)
+        c.execute('''CREATE TABLE IF NOT EXISTS total_counts (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            total_visits INTEGER DEFAULT 0,
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )''')
         
         conn.commit()
         logger.info("Database initialized successfully")
@@ -75,187 +83,152 @@ app.add_middleware(
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-def track_visitor(ip: str, user_agent: str, page: str = "/"):
-    """Track visitor information"""
+def get_or_create_visitor_id(request: Request):
+    """Get or create anonymous visitor ID using cookie (NO IP tracking)"""
+    # Try to get existing visitor ID from cookie
+    visitor_id = request.cookies.get("visitor_id")
+    
+    if not visitor_id:
+        # Create new anonymous ID
+        visitor_id = str(uuid.uuid4())
+        logger.info(f"New visitor assigned ID: {visitor_id[:8]}...")
+    
+    return visitor_id
+
+def track_visit(visitor_id: str):
+    """Track a visit anonymously"""
     try:
         conn = sqlite3.connect(DATABASE)
         c = conn.cursor()
+        
+        # Check if this visitor has visited today (for daily unique count)
+        today = datetime.now().strftime('%Y-%m-%d')
         c.execute(
-            "INSERT INTO visitors (ip, user_agent, page) VALUES (?, ?, ?)", 
-            (ip, user_agent, page)
+            "SELECT COUNT(*) FROM visits WHERE visitor_id = ? AND DATE(timestamp) = ?", 
+            (visitor_id, today)
         )
+        has_visited_today = c.fetchone()[0] > 0
+        
+        # Always record the visit
+        c.execute(
+            "INSERT INTO visits (visitor_id) VALUES (?)", 
+            (visitor_id,)
+        )
+        
+        # Update total counts cache
+        c.execute('''INSERT OR REPLACE INTO total_counts (id, total_visits, last_updated) 
+                     VALUES (1, COALESCE((SELECT total_visits FROM total_counts WHERE id = 1), 0) + 1, 
+                     CURRENT_TIMESTAMP)''')
+        
         conn.commit()
-        logger.info(f"Visitor tracked: {ip} on {page}")
-        return True
+        
+        return {
+            "is_new_today": not has_visited_today,
+            "visitor_id": visitor_id[:8] + "..."  # Return truncated for logging only
+        }
+        
     except Exception as e:
-        logger.error(f"Error tracking visitor: {e}")
-        return False
+        logger.error(f"Error tracking visit: {e}")
+        return {"error": str(e)}
     finally:
         if conn:
             conn.close()
 
 def get_visitor_stats():
-    """Get visitor statistics"""
+    """Get visitor statistics (anonymous)"""
     try:
         conn = sqlite3.connect(DATABASE)
         c = conn.cursor()
         
-        # Total visitors
-        c.execute("SELECT COUNT(*) FROM visitors")
-        total = c.fetchone()[0] or 0
+        # Get cached total visits
+        c.execute("SELECT total_visits FROM total_counts WHERE id = 1")
+        total_row = c.fetchone()
+        total = total_row[0] if total_row else 0
         
-        # Today's visitors
+        # Today's visits (all)
         today = datetime.now().strftime('%Y-%m-%d')
-        c.execute("SELECT COUNT(*) FROM visitors WHERE DATE(timestamp) = ?", (today,))
+        c.execute("SELECT COUNT(*) FROM visits WHERE DATE(timestamp) = ?", (today,))
         today_count = c.fetchone()[0] or 0
         
-        # This week's visitors
+        # Today's unique visitors
+        c.execute("SELECT COUNT(DISTINCT visitor_id) FROM visits WHERE DATE(timestamp) = ?", (today,))
+        today_unique = c.fetchone()[0] or 0
+        
+        # This week's visits
         week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        c.execute("SELECT COUNT(*) FROM visitors WHERE DATE(timestamp) >= ?", (week_ago,))
+        c.execute("SELECT COUNT(*) FROM visits WHERE DATE(timestamp) >= ?", (week_ago,))
         week_count = c.fetchone()[0] or 0
         
-        # This month's visitors
+        # This month's visits
         month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        c.execute("SELECT COUNT(*) FROM visitors WHERE DATE(timestamp) >= ?", (month_ago,))
+        c.execute("SELECT COUNT(*) FROM visits WHERE DATE(timestamp) >= ?", (month_ago,))
         month_count = c.fetchone()[0] or 0
         
-        # Unique visitors (based on IP)
-        c.execute("SELECT COUNT(DISTINCT ip) FROM visitors")
+        # Unique visitors all time
+        c.execute("SELECT COUNT(DISTINCT visitor_id) FROM visits")
         unique = c.fetchone()[0] or 0
         
         # Visitors in last 24 hours
         day_ago = datetime.now() - timedelta(hours=24)
-        c.execute("SELECT COUNT(*) FROM visitors WHERE timestamp >= ?", (day_ago,))
+        c.execute("SELECT COUNT(*) FROM visits WHERE timestamp >= ?", (day_ago,))
         last_24h = c.fetchone()[0] or 0
+        
+        # Last 7 days data for chart
+        last_7_days = []
+        for i in range(6, -1, -1):
+            date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            day_label = (datetime.now() - timedelta(days=i)).strftime('%a')
+            
+            c.execute("SELECT COUNT(*) FROM visits WHERE DATE(timestamp) = ?", (date,))
+            day_count = c.fetchone()[0] or 0
+            
+            c.execute("SELECT COUNT(DISTINCT visitor_id) FROM visits WHERE DATE(timestamp) = ?", (date,))
+            day_unique = c.fetchone()[0] or 0
+            
+            last_7_days.append({
+                "date": date,
+                "label": day_label,
+                "visits": day_count,
+                "unique": day_unique
+            })
         
         conn.close()
         
         return {
-            "total_visitors": total,
-            "today_visitors": today_count,
-            "week_visitors": week_count,
-            "month_visitors": month_count,
+            "total_visits": total,
+            "today_visits": today_count,
+            "today_unique": today_unique,
+            "week_visits": week_count,
+            "month_visits": month_count,
             "unique_visitors": unique,
-            "last_24h_visitors": last_24h,
+            "last_24h_visits": last_24h,
+            "last_7_days": last_7_days,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         return {
-            "total_visitors": 0,
-            "today_visitors": 0,
-            "week_visitors": 0,
-            "month_visitors": 0,
+            "total_visits": 0,
+            "today_visits": 0,
+            "today_unique": 0,
+            "week_visits": 0,
+            "month_visits": 0,
             "unique_visitors": 0,
-            "last_24h_visitors": 0,
-            "timestamp": datetime.now().isoformat(),
-            "error": str(e)
-        }
-
-def get_live_visitors(minutes: int = 5):
-    """Get visitors from the last X minutes (live visitors)"""
-    try:
-        conn = sqlite3.connect(DATABASE)
-        c = conn.cursor()
-        
-        # Get timestamp X minutes ago
-        time_ago = datetime.now() - timedelta(minutes=minutes)
-        
-        # Get visitors from last X minutes
-        c.execute("""
-            SELECT ip, user_agent, timestamp, page 
-            FROM visitors 
-            WHERE timestamp >= ?
-            ORDER BY timestamp DESC
-        """, (time_ago,))
-        
-        visitors = []
-        rows = c.fetchall()
-        for row in rows:
-            visitors.append({
-                "ip": row[0] or "unknown",
-                "user_agent": row[1] or "unknown",
-                "timestamp": row[2] or datetime.now().isoformat(),
-                "page": row[3] or "/",
-                "time_ago": get_time_ago(row[2]) if row[2] else "just now"
-            })
-        
-        # Get unique IPs in last X minutes
-        c.execute("""
-            SELECT COUNT(DISTINCT ip) 
-            FROM visitors 
-            WHERE timestamp >= ?
-        """, (time_ago,))
-        
-        unique_count = c.fetchone()[0] or 0
-        
-        conn.close()
-        
-        return {
-            "total": len(visitors),
-            "unique": unique_count,
-            "time_period_minutes": minutes,
-            "visitors": visitors,
+            "last_24h_visits": 0,
+            "last_7_days": [],
             "timestamp": datetime.now().isoformat()
         }
-        
-    except Exception as e:
-        logger.error(f"Error getting live visitors: {e}")
-        return {
-            "total": 0,
-            "unique": 0,
-            "time_period_minutes": minutes,
-            "visitors": [],
-            "error": str(e)
-        }
-
-def get_time_ago(timestamp_str: str) -> str:
-    """Convert timestamp to human-readable time ago"""
-    try:
-        if isinstance(timestamp_str, str):
-            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-        else:
-            timestamp = timestamp_str
-            
-        now = datetime.now()
-        diff = now - timestamp
-        
-        if diff.total_seconds() < 60:
-            return "just now"
-        elif diff.total_seconds() < 3600:
-            minutes = int(diff.total_seconds() / 60)
-            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
-        elif diff.total_seconds() < 86400:
-            hours = int(diff.total_seconds() / 3600)
-            return f"{hours} hour{'s' if hours > 1 else ''} ago"
-        else:
-            days = int(diff.total_seconds() / 86400)
-            return f"{days} day{'s' if days > 1 else ''} ago"
-    except:
-        return "recently"
-
-def get_client_ip(request: Request) -> str:
-    """Extract client IP from request"""
-    if request.client:
-        ip = request.client.host
-        # Check for X-Forwarded-For header if behind proxy
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            ip = forwarded_for.split(",")[0].strip()
-        return ip
-    return "unknown"
 
 # Routes
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Home page route - serves index.html"""
     try:
-        # Get client IP and user agent
-        ip = get_client_ip(request)
-        user_agent = request.headers.get("User-Agent", "unknown")
+        # Get or create anonymous visitor ID
+        visitor_id = get_or_create_visitor_id(request)
         
-        # Track visitor
-        track_visitor(ip, user_agent, "/")
+        # Track visit (anonymous)
+        track_result = track_visit(visitor_id)
         
         # Serve index.html from root directory
         html_path = BASE_DIR / "index.html"
@@ -264,12 +237,22 @@ async def home(request: Request):
             logger.error(f"index.html not found at: {html_path}")
             raise HTTPException(status_code=404, detail="index.html not found")
         
-        # Read and return HTML file
+        # Read HTML file
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
         
-        logger.info(f"Served home page to {ip}")
-        return HTMLResponse(content=html_content, status_code=200)
+        # Create response with visitor ID cookie (30 days expiration)
+        response = HTMLResponse(content=html_content, status_code=200)
+        response.set_cookie(
+            key="visitor_id",
+            value=visitor_id,
+            max_age=30*24*60*60,  # 30 days
+            httponly=True,
+            samesite="lax"
+        )
+        
+        logger.info(f"Served home page to visitor: {visitor_id[:8]}... (new today: {track_result.get('is_new_today', False)})")
+        return response
         
     except HTTPException:
         raise
@@ -282,86 +265,6 @@ async def home(request: Request):
 async def stats_api():
     """API endpoint to get visitor statistics"""
     return JSONResponse(get_visitor_stats())
-
-@app.get("/api/live-visitors")
-async def live_visitors_api(minutes: int = 5):
-    """API endpoint to get live visitors (from last X minutes)"""
-    return JSONResponse(get_live_visitors(minutes))
-
-@app.get("/api/visitors/recent")
-async def recent_visitors(limit: int = 20):
-    """API endpoint to get recent visitors"""
-    try:
-        conn = sqlite3.connect(DATABASE)
-        c = conn.cursor()
-        c.execute("""
-            SELECT ip, user_agent, timestamp, page 
-            FROM visitors 
-            ORDER BY timestamp DESC 
-            LIMIT ?
-        """, (limit,))
-        
-        visitors = []
-        rows = c.fetchall()
-        for row in rows:
-            visitors.append({
-                "ip": row[0] or "unknown",
-                "user_agent": row[1] or "unknown",
-                "timestamp": row[2] or datetime.now().isoformat(),
-                "page": row[3] or "/",
-                "time_ago": get_time_ago(row[2]) if row[2] else "just now"
-            })
-        
-        conn.close()
-        return JSONResponse(visitors)
-        
-    except Exception as e:
-        logger.error(f"Error getting recent visitors: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/api/visitors/count")
-async def visitor_count(days: int = None, hours: int = None):
-    """API endpoint to get visitor count for specific period"""
-    try:
-        conn = sqlite3.connect(DATABASE)
-        c = conn.cursor()
-        
-        if hours:
-            time_filter = datetime.now() - timedelta(hours=hours)
-            c.execute("SELECT COUNT(*) FROM visitors WHERE timestamp >= ?", (time_filter,))
-            period = f"{hours} hours"
-        elif days:
-            time_filter = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-            c.execute("SELECT COUNT(*) FROM visitors WHERE DATE(timestamp) >= ?", (time_filter,))
-            period = f"{days} days"
-        else:
-            c.execute("SELECT COUNT(*) FROM visitors")
-            period = "all time"
-        
-        count = c.fetchone()[0] or 0
-        
-        # Get unique count for the same period
-        if hours:
-            c.execute("SELECT COUNT(DISTINCT ip) FROM visitors WHERE timestamp >= ?", (time_filter,))
-        elif days:
-            c.execute("SELECT COUNT(DISTINCT ip) FROM visitors WHERE DATE(timestamp) >= ?", (time_filter,))
-        else:
-            c.execute("SELECT COUNT(DISTINCT ip) FROM visitors")
-        
-        unique_count = c.fetchone()[0] or 0
-        
-        conn.close()
-        
-        return JSONResponse({
-            "total": count, 
-            "unique": unique_count,
-            "period": period,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting visitor count: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
 
 # Health check endpoint
 @app.get("/health")
@@ -377,38 +280,19 @@ async def health_check():
         "uptime": "running"
     }
 
-# Debug endpoint
+# Debug endpoint (simplified)
 @app.get("/debug")
 async def debug_info():
     """Debug endpoint to check server status"""
+    stats = get_visitor_stats()
     return {
-        "base_dir": str(BASE_DIR),
-        "files": {
-            "index.html": os.path.exists(BASE_DIR / "index.html"),
-            "style.css": os.path.exists(BASE_DIR / "static/css/style.css"),
-            "main.js": os.path.exists(BASE_DIR / "static/js/main.js"),
-            "visitors.db": os.path.exists(DATABASE),
-            "app.py": os.path.exists(BASE_DIR / "app.py")
-        },
-        "static_files": {
-            "css": os.listdir(BASE_DIR / "static/css") if os.path.exists(BASE_DIR / "static/css") else [],
-            "js": os.listdir(BASE_DIR / "static/js") if os.path.exists(BASE_DIR / "static/js") else []
-        },
-        "stats": get_visitor_stats(),
-        "live_visitors": get_live_visitors(5),
-        "server_time": datetime.now().isoformat()
+        "server_time": datetime.now().isoformat(),
+        "visitor_stats": {
+            "total_visits": stats["total_visits"],
+            "unique_visitors": stats["unique_visitors"],
+            "today_visits": stats["today_visits"]
+        }
     }
-
-@app.get("/favicon.ico")
-async def favicon():
-    """Handle favicon requests"""
-    favicon_path = BASE_DIR / "favicon.ico"
-    if favicon_path.exists():
-        return FileResponse(favicon_path)
-    favicon_path = STATIC_DIR / "favicon.ico"
-    if favicon_path.exists():
-        return FileResponse(favicon_path)
-    return JSONResponse({"status": "no favicon"}, status_code=404)
 
 # Error handlers
 @app.exception_handler(404)
@@ -421,24 +305,9 @@ async def not_found_handler(request: Request, exc):
             "available_endpoints": [
                 "/ - Home page",
                 "/api/stats - Visitor statistics",
-                "/api/live-visitors - Live visitors (last 5 minutes)",
-                "/api/visitors/recent - Recent visitors",
-                "/api/visitors/count - Visitor count by period",
                 "/health - Health check",
                 "/debug - Debug information"
             ]
-        }
-    )
-
-@app.exception_handler(500)
-async def internal_error_handler(request: Request, exc):
-    logger.error(f"Internal server error: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "message": "Internal server error",
-            "path": str(request.url.path),
-            "timestamp": datetime.now().isoformat()
         }
     )
 
@@ -448,20 +317,11 @@ if __name__ == "__main__":
     print("=" * 50)
     print("🚀 Starting MediTour Medical Tourism Website")
     print("=" * 50)
-    print(f"📁 Working directory: {os.getcwd()}")
-    print(f"📁 Base directory: {BASE_DIR}")
-    print(f"📄 Main HTML file: {BASE_DIR / 'index.html'} (exists: {os.path.exists(BASE_DIR / 'index.html')})")
-    print(f"🎨 Static files directory: {STATIC_DIR} (exists: {os.path.exists(STATIC_DIR)})")
-    print(f"🗄️  Database: {DATABASE} (exists: {os.path.exists(DATABASE)})")
-    print("\n✅ Server initialized")
-    print("\n🌐 Website URLs:")
-    print("   - Main site: http://localhost:8000")
-    print("   - Health check: http://localhost:8000/health")
-    print("   - Debug info: http://localhost:8000/debug")
-    print("   - Visitor stats API: http://localhost:8000/api/stats")
-    print("   - Live visitors API: http://localhost:8000/api/live-visitors")
-    print("   - Recent visitors API: http://localhost:8000/api/visitors/recent")
-    print("\n⚡ Running FastAPI with Uvicorn...")
+    print("📊 Anonymous Visitor Tracking Enabled")
+    print("🚫 No IP or personal data stored")
+    print("🍪 Using cookies for unique visitor identification")
+    print("\n🌐 Website URL: http://localhost:8000")
+    print("📈 Stats API: http://localhost:8000/api/stats")
     print("=" * 50)
     
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
