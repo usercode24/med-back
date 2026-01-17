@@ -67,7 +67,7 @@ app = FastAPI(
     title="Max medical and healthcare  support",
     description="A platform for medical tourism services",
     version="1.0.0",
-    debug=True
+ #   debug=True
 )
 
 # Add CORS middleware
