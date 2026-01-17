@@ -311,17 +311,17 @@ async def not_found_handler(request: Request, exc):
         }
     )
 
-if __name__ == "__main__":
-    import uvicorn
+# if __name__ == "__main__":
+#     import uvicorn
     
-    print("=" * 50)
-    print("🚀 Starting Max medical and healthcare  support Website")
-    print("=" * 50)
-    print("📊 Anonymous Visitor Tracking Enabled")
-    print("🚫 No IP or personal data stored")
-    print("🍪 Using cookies for unique visitor identification")
-    print("\n🌐 Website URL: http://localhost:8000")
-    print("📈 Stats API: http://localhost:8000/api/stats")
-    print("=" * 50)
+#     print("=" * 50)
+#     print("🚀 Starting Max medical and healthcare  support Website")
+#     print("=" * 50)
+#     print("📊 Anonymous Visitor Tracking Enabled")
+#     print("🚫 No IP or personal data stored")
+#     print("🍪 Using cookies for unique visitor identification")
+#     print("\n🌐 Website URL: http://localhost:8000")
+#     print("📈 Stats API: http://localhost:8000/api/stats")
+#     print("=" * 50)
     
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+#     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
