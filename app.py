@@ -280,19 +280,19 @@ async def health_check():
         "uptime": "running"
     }
 
-# Debug endpoint (simplified)
-@app.get("/debug")
-async def debug_info():
-    """Debug endpoint to check server status"""
-    stats = get_visitor_stats()
-    return {
-        "server_time": datetime.now().isoformat(),
-        "visitor_stats": {
-            "total_visits": stats["total_visits"],
-            "unique_visitors": stats["unique_visitors"],
-            "today_visits": stats["today_visits"]
-        }
-    }
+# # Debug endpoint (simplified)
+# @app.get("/debug")
+# async def debug_info():
+#     """Debug endpoint to check server status"""
+#     stats = get_visitor_stats()
+#     return {
+#         "server_time": datetime.now().isoformat(),
+#         "visitor_stats": {
+#             "total_visits": stats["total_visits"],
+#             "unique_visitors": stats["unique_visitors"],
+#             "today_visits": stats["today_visits"]
+#         }
+#     }
 
 # Error handlers
 @app.exception_handler(404)
